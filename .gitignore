@@ -1,0 +1,38 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+out/
+bin/
+target/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go
+vendor/
+go.work.sum
+
+# 本地环境与密钥（绝不入库）
+.env
+.env.*
+*.local
+*.pem
+*.key
+
+# 编辑器与系统
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 运行时/调试数据
+*.log
+.dev-data/
+.tmp/
