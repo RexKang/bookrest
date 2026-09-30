@@ -22,9 +22,36 @@
 - 不是电子书服务器：不提供 OPDS，不做多用户
 - 不是元数据编辑器：不写回你的文件
 
+## 运行（Windows）
+
+```bash
+# 方式一：直接运行已构建的桌面应用
+cmd/bookrest/build/bin/bookrest.exe
+
+# 方式二：自己构建（需要 Go 1.25+ 与 Wails v2 CLI）
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+cd cmd/bookrest && wails build        # 产物：build/bin/bookrest.exe
+
+# 方式三：开发模式——无桌面壳，浏览器里跑同一套前端（HTTP 传输）
+go run ./cmd/bookrest-cli serve --root <你的书库目录> --addr 127.0.0.1:8899
+```
+
+命令行工具（`cmd/bookrest-cli`，开发与排障用）：
+
+```bash
+go run ./cmd/bookrest-cli scan   --root <库根>   # 扫描并建立本机镜像
+go run ./cmd/bookrest-cli shelf  --root <库根>   # 终端书架视图（ANSI 书脊）
+go run ./cmd/bookrest-cli report --root <库根>   # 只读体检报告（缺卷/重复/损坏/无封面/命名）
+```
+
 ## 状态
 
-方案与设计阶段，代码尚未开始。设计文档落定后进入 v0.1.0 开发。
+**v0.1.0-m2**：内核与界面完整可用。
+
+- 已实现：零导入扫描（目录剪枝 + 指纹身份 + 移动认领 + 精确重复）、CBZ/EPUB 只读解析、
+  本机镜像与库内快照（原子写 + 滚动备份 + 冲突不静默）、书架视图（架层 + 书脊 + 拖拽）、
+  封面墙、详情页（标签/评分/在架定位/系统打开）、体检报告（含 CSV 导出）、设置、离线只读。
+- 未做：CBR(rar) 解析、自由 2D 画布摆放、在线元数据补全、非 Windows 打包。
 
 ## License
 

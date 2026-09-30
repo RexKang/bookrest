@@ -36,3 +36,12 @@ desktop.ini
 *.log
 .dev-data/
 .tmp/
+
+# Wails 构建产物（可重建；build/ 下的图标与清单模板除外）
+cmd/bookrest/build/bin/
+cmd/bookrest/frontend/
+cmd/bookrest/wailsjs/
+
+# 测试数据目录（本机生成，绝不入库）
+bookrest-testlib/
+*.manifest.json
