@@ -27,9 +27,13 @@ type Fact struct {
 	Art   Art                `json:"art"`
 	Seen  Seen               `json:"seen"`
 	Flags Flags              `json:"flags"`
+	// Dups 记录与本体字节完全相同的其他路径（精确重复）。
+	// 身份以字节为准，所以重复文件不会各占一条记录，而是挂在同一身份下。
+	Dups []string `json:"dups,omitempty"`
 }
 
 type Art struct {
+	Cover  bool `json:"cover"`
 	Thumb  bool `json:"thumb"`
 	Spine  bool `json:"spine"`
 	Failed bool `json:"failed"`
@@ -96,7 +100,8 @@ func (ix *Index) Load() error {
 	return nil
 }
 
-func (ix *Index) Save() error {
+// MarshalJSONL 把事实账序列化为 JSONL（按路径排序，便于 diff）。
+func (ix *Index) MarshalJSONL() ([]byte, error) {
 	list := make([]Fact, 0, len(ix.items))
 	for _, f := range ix.items {
 		list = append(list, f)
@@ -106,10 +111,18 @@ func (ix *Index) Save() error {
 	for _, f := range list {
 		line, err := json.Marshal(f)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		buf = append(buf, line...)
 		buf = append(buf, '\n')
+	}
+	return buf, nil
+}
+
+func (ix *Index) Save() error {
+	buf, err := ix.MarshalJSONL()
+	if err != nil {
+		return err
 	}
 	return WriteFileAtomic(ix.path, buf)
 }

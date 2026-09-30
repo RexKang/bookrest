@@ -48,6 +48,16 @@ func For(ext string) (Parser, bool) {
 // ForPath 便捷入口。
 func ForPath(path string) (Parser, bool) { return For(filepath.Ext(path)) }
 
+// bookExts 是「算作书」的扩展名白名单。
+// 扫描器只索引这些格式，其余文件（.json/.txt/.nfo 等）一律忽略，避免把无关文件当书。
+var bookExts = map[string]bool{
+	".cbz": true, ".cbr": true, ".epub": true, ".pdf": true,
+	".mobi": true, ".azw3": true, ".azw": true, ".fb2": true,
+}
+
+// IsBookExt 判断扩展名是否属于受支持的书籍格式。
+func IsBookExt(ext string) bool { return bookExts[strings.ToLower(ext)] }
+
 // IsImageExt 判断是否算作「页」。
 func IsImageExt(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {

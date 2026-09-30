@@ -91,7 +91,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	mfPath := filepath.Join(*out, "manifest.json")
+	// manifest 写在库目录之外：库内只应有书，扫描器也只认书籍格式
+	mfPath := *out + ".manifest.json"
 	if mf, err := readManifest(mfPath); err == nil && mf.Scale == *scale && mf.Seed == *seed && mf.Version == manifestVersion {
 		fmt.Printf("复用已有数据（scale=%s seed=%d books=%d bytes=%.1fMB）\n", mf.Scale, mf.Seed, mf.Books, float64(mf.Bytes)/1048576)
 		return
