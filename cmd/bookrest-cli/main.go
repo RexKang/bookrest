@@ -34,8 +34,10 @@ func main() {
 	series := fs.String("series", "", "只看某个系列")
 	width := fs.Int("width", 100, "终端宽度")
 	asJSON := fs.Bool("json", false, "输出 JSON")
-	addr := fs.String("addr", "127.0.0.1:8899", "serve 监听地址")
+	addr := fs.String("addr", "127.0.0.1:8899", "serve 监听地址（非本机地址需 --allow-remote）")
 	distDir := fs.String("dist", "frontend/dist", "前端静态目录（serve 用）")
+	token := fs.String("token", "", "serve 访问令牌（默认随机生成）")
+	allowRemote := fs.Bool("allow-remote", false, "显式授权绑定非本机地址")
 	_ = fs.Parse(os.Args[2:])
 	if *root == "" {
 		fmt.Fprintln(os.Stderr, "必须指定 --root")
@@ -68,7 +70,10 @@ func main() {
 		cmdReport(a, *asJSON)
 	case "serve":
 		// 与产品 B/S 模式共用同一份实现（internal/server）
-		if err := server.Run(a, server.Options{Addr: *addr, DistDir: *distDir, Dev: true}); err != nil {
+		if err := server.Run(a, server.Options{
+			Addr: *addr, DistDir: *distDir, Dev: true,
+			Token: *token, AllowRemote: *allowRemote,
+		}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

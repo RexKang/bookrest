@@ -41,10 +41,13 @@ func main() {
 	// 命令行开关
 	addr := "127.0.0.1:8788"
 	serveMode := false
+	allowRemote := false
 	for i, arg := range os.Args[1:] {
 		switch arg {
 		case "--serve", "-s", "serve":
 			serveMode = true
+		case "--allow-remote":
+			allowRemote = true
 		case "--version", "-v":
 			fmt.Printf("拾书 Bookrest %s\n", app.Version)
 			return
@@ -55,15 +58,19 @@ func main() {
 		case "--help", "-h":
 			fmt.Println("拾书 Bookrest " + app.Version)
 			fmt.Println("  （无参数）            打开桌面窗口（C/S）")
-			fmt.Println("  --serve [--addr 地址] 以 B/S 模式启动本地服务，浏览器访问")
+			fmt.Println("  --serve [--addr 地址] 以 B/S 模式启动本地服务，浏览器访问（默认只绑本机）")
+			fmt.Println("  --allow-remote        显式授权绑定非本机地址（局域网访问；风险自负）")
 			fmt.Println("  --version             显示版本号")
 			return
 		}
 	}
 
 	// B/S 模式：同一份内核与前端，换 HTTP 传输
+	// 安全：默认只绑本机回环地址 + 随机访问令牌；绑定非本机地址必须显式 --allow-remote
 	if serveMode {
-		if err := server.Run(a, server.Options{Addr: addr, Dist: frontend.Assets()}); err != nil {
+		if err := server.Run(a, server.Options{
+			Addr: addr, Dist: frontend.Assets(), AllowRemote: allowRemote,
+		}); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -97,22 +104,35 @@ type Shell struct {
 	ctx     context.Context
 	app     *app.App
 	webOnce sync.Once
+	webURL  string
+	webErr  error
 }
 
-// OpenInBrowser 在进程内起一个 B/S 服务（同一套前端），并用系统浏览器打开。
+// OpenInBrowser 在进程内起一个 B/S 服务（只绑本机 + 随机令牌），用系统浏览器打开。
+// 令牌随 URL 一起给出，浏览器首次进入后转存为 HttpOnly Cookie，地址栏不留令牌。
 func (s *Shell) OpenInBrowser() (string, error) {
 	const addr = "127.0.0.1:8788"
 	s.webOnce.Do(func() {
+		tok, err := server.NewToken()
+		if err != nil {
+			s.webErr = err
+			return
+		}
+		s.webURL = server.URL(addr, tok)
 		go func() {
-			if err := server.Run(s.app, server.Options{Addr: addr, Dist: frontend.Assets()}); err != nil {
+			if err := server.Run(s.app, server.Options{
+				Addr: addr, Dist: frontend.Assets(), Token: tok, Quiet: true,
+			}); err != nil {
 				log.Println("B/S 模式启动失败:", err)
 			}
 		}()
 		time.Sleep(250 * time.Millisecond)
 	})
-	url := "http://" + addr
-	runtime.BrowserOpenURL(s.ctx, url)
-	return url, nil
+	if s.webErr != nil {
+		return "", s.webErr
+	}
+	runtime.BrowserOpenURL(s.ctx, s.webURL)
+	return s.webURL, nil
 }
 
 // PickLibraryDir 打开系统目录选择器，返回用户选择的库根目录。
