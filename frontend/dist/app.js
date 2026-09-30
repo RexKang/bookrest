@@ -499,9 +499,16 @@
       ? '<div class="field-group"><div class="gl">访问方式</div>'
         + '<div style="display:flex;align-items:center;gap:var(--sp-2)">'
         + '<button class="small" id="stBrowser">在浏览器中打开</button>'
-        + '<span class="muted" style="font-size:var(--fs-12)">同一套界面，B/S 模式；也可以直接运行 <code>bookrest.exe --serve</code></span>'
+        + '<span class="muted" style="font-size:var(--fs-12)">同一套界面，B/S 模式</span>'
+        + '</div>'
+        + '<div class="muted" style="font-size:var(--fs-12);margin-top:var(--sp-1)">'
+        + '安全默认：只绑本机地址（127.0.0.1）+ 每次启动随机访问令牌；令牌写在启动时打印的地址里，'
+        + '首次进入后转存为 HttpOnly Cookie。要让同网段其他设备访问，必须显式运行 '
+        + '<code>bookrest.exe --serve --addr 0.0.0.0:8788 --allow-remote</code>（等同授权外网访问）。'
         + '</div></div>'
-      : '<div class="field-group"><div class="gl">访问方式</div><div class="muted" style="font-size:var(--fs-12)">当前就是 B/S 模式（浏览器访问）；桌面窗口版运行 bookrest.exe 即可</div></div>';
+      : '<div class="field-group"><div class="gl">访问方式</div><div class="muted" style="font-size:var(--fs-12)">'
+        + '当前就是 B/S 模式（浏览器访问，已通过访问令牌校验）；桌面窗口版运行 bookrest.exe 即可。'
+        + '</div></div>';
     openModal('<h3>设置</h3>'
       + row('版本', '<span class="muted">' + esc($('#ver').textContent) + '</span>')
       + row('镜像目录（本机运行时数据）', '<span class="muted" style="font-size:var(--fs-12)">' + esc(s.mirror_dir || '') + '</span>')
