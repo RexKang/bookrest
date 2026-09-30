@@ -33,13 +33,15 @@ type Stats struct {
 	Updated     int
 	Moved       int
 	Missing     int
+	Duplicates  int
 }
 
 type Diff struct {
-	Added   []string
-	Updated []string
-	Moved   []string
-	Missing []string
+	Added      []string
+	Updated    []string
+	Moved      []string
+	Missing    []string
+	Duplicates []string
 }
 
 type Scanner struct {
@@ -52,6 +54,7 @@ type Scanner struct {
 func (s *Scanner) ScanIncremental(idx *store.Index, st *store.ScanState) (Diff, error) {
 	var diff Diff
 	seen := map[string]bool{}
+	var prunedPrefixes []string // 被剪枝的目录前缀：其下条目未访问但视为未变化
 	now := time.Now().Unix()
 	scanStart := time.Now().UnixNano()
 
@@ -79,6 +82,7 @@ func (s *Scanner) ScanIncremental(idx *store.Index, st *store.ScanState) (Diff, 
 				//  2) 直接子项数量与记录一致（增删必然改变数量，即使 mtime 尚未落定）
 				if prev, ok := st.Dirs[rel]; ok && prev.MTime != 0 && prev.MTime == mtime && prev.Files == cur {
 					s.Stats.PrunedDirs++
+					prunedPrefixes = append(prunedPrefixes, rel+"/")
 					return filepath.SkipDir // 整棵子树跳过
 				}
 			}
@@ -94,6 +98,9 @@ func (s *Scanner) ScanIncremental(idx *store.Index, st *store.ScanState) (Diff, 
 		}
 		if strings.HasPrefix(d.Name(), ".") {
 			return nil // 跳过隐藏文件
+		}
+		if !parse.IsBookExt(filepath.Ext(d.Name())) {
+			return nil // 非书籍格式（封面缓存、说明文件、缩略图等）一律忽略
 		}
 		s.Stats.FilesStatted++
 		info, ierr := d.Info()
@@ -124,13 +131,23 @@ func (s *Scanner) ScanIncremental(idx *store.Index, st *store.ScanState) (Diff, 
 			Seen: store.Seen{First: now, Last: now},
 		}
 
-		// 移动/重命名认领：同 ID 已在索引里但路径不同
+		// 同 ID 已在索引里但路径不同：要么是移动，要么是重复文件
 		if old, ok := idx.Get(id); ok {
 			fact.Seen = old.Seen
 			fact.Meta = old.Meta
 			fact.Art = old.Art
 			fact.Pages = old.Pages
+			fact.Dups = old.Dups
 			if old.Rel != rel {
+				// 旧路径仍然存在 → 这是精确重复（字节完全相同），不新建条目
+				if _, statErr := os.Stat(filepath.Join(s.Root, filepath.FromSlash(old.Rel))); statErr == nil {
+					old.Dups = appendUnique(old.Dups, rel)
+					idx.Put(old)
+					seen[id] = true
+					s.Stats.Duplicates++
+					diff.Duplicates = append(diff.Duplicates, rel)
+					return nil
+				}
 				s.Stats.Moved++
 				diff.Moved = append(diff.Moved, rel)
 			} else {
@@ -147,6 +164,7 @@ func (s *Scanner) ScanIncremental(idx *store.Index, st *store.ScanState) (Diff, 
 				s.Stats.Parsed++
 				pages := res.Pages
 				fact.Pages = &pages
+				fact.Art.Cover = len(res.Cover) > 0
 				fact.Meta = domain.Merge(
 					// 用户覆盖由上层在查询时叠加；这里只合并「内嵌 > 文件名」
 					domain.Meta{}, res.Meta, domain.ParseFilename(filepath.Base(rel)),
@@ -172,10 +190,24 @@ func (s *Scanner) ScanIncremental(idx *store.Index, st *store.ScanState) (Diff, 
 		return diff, err
 	}
 
-	// 缺失：本轮未见到的记录标 missing（不删除，保留摆放）
+	// 缺失：本轮未见到的记录标 missing（不删除，保留摆放）。
+	// 注意：落在被剪枝目录下的条目「没被访问」但「也没变化」，必须先排除，
+	// 否则稳定库每次扫描都会把整库误判为缺失。
 	var missingIDs []string
 	idx.Each(func(f store.Fact) bool {
-		if !seen[f.ID] && !f.Flags.Missing {
+		if seen[f.ID] {
+			return true
+		}
+		for _, p := range prunedPrefixes {
+			if strings.HasPrefix(f.Rel, p) {
+				if f.Flags.Missing { // 之前误标过或又出现：清掉标记
+					f.Flags.Missing = false
+					idx.Put(f)
+				}
+				return true
+			}
+		}
+		if !f.Flags.Missing {
 			f.Flags.Missing = true
 			idx.Put(f)
 			missingIDs = append(missingIDs, f.ID)
@@ -187,6 +219,15 @@ func (s *Scanner) ScanIncremental(idx *store.Index, st *store.ScanState) (Diff, 
 
 	st.LastScan = now
 	return diff, nil
+}
+
+func appendUnique(list []string, v string) []string {
+	for _, s := range list {
+		if s == v {
+			return list
+		}
+	}
+	return append(list, v)
 }
 
 // countEntries 统计目录的直接子项数量（含子目录）：

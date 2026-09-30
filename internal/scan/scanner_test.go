@@ -151,6 +151,9 @@ func TestScanLifecycle(t *testing.T) {
 	if st2b.PrunedDirs < 2 {
 		t.Fatalf("应剪枝至少 2 个目录（SeriesA/SeriesB），得到 %d", st2b.PrunedDirs)
 	}
+	if st2b.Missing != 0 {
+		t.Fatalf("剪枝不应把未访问的条目误判为缺失，得到 %d", st2b.Missing)
+	}
 
 	// 阶段 3：新增一本——只有变化目录内的文件被 stat
 	if err := testutil.WriteCBZ(filepath.Join(e.root, "SeriesA", "v4.cbz"),
