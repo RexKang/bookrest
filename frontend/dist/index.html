@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>拾书 Bookrest</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand">拾书 <span class="muted">Bookrest</span></div>
+
+    <div class="side-block">
+      <div class="side-title">库</div>
+      <div id="libList" class="lib-list"></div>
+      <button id="btnAddLib" class="ghost small">＋ 添加库目录</button>
+    </div>
+
+    <div class="side-block grow">
+      <div class="side-title">书架</div>
+      <div id="shelfList" class="shelf-list"></div>
+      <button id="btnNewShelf" class="ghost small">＋ 新建书架</button>
+    </div>
+
+    <div class="side-block">
+      <div class="side-title">过滤</div>
+      <div id="filters" class="filters"></div>
+    </div>
+
+    <div class="side-actions">
+      <button id="btnScan" class="primary">扫描库</button>
+      <button id="btnSettings" class="ghost">设置</button>
+    </div>
+  </aside>
+
+  <main>
+    <header id="topbar">
+      <div class="views" id="viewTabs">
+        <button data-view="shelf" class="on">书架视图</button>
+        <button data-view="wall">封面墙</button>
+        <button data-view="report">体检报告</button>
+      </div>
+      <input id="search" placeholder="搜索 标题 / 系列 / 作者 / 路径">
+      <select id="sortBy">
+        <option value="series">按系列排序</option>
+        <option value="title">按标题排序</option>
+        <option value="recent">按加入时间</option>
+      </select>
+      <span id="stats" class="muted"></span>
+    </header>
+
+    <div id="offline" class="banner hidden"></div>
+    <div id="scanbar" class="scanbar hidden"><span class="spin"></span><span id="scanText">扫描中…</span></div>
+
+    <section id="content" class="content"></section>
+  </main>
+
+  <aside id="detail" class="drawer"></aside>
+  <div id="modal" class="modal hidden"></div>
+  <div id="toast" class="toast hidden"></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

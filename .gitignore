@@ -1,9 +1,7 @@
 # 依赖与构建产物
+# 注意：frontend/dist 是**手写源码**（无构建步骤），不能忽略；忽略规则一律写具体路径
 node_modules/
-dist/
-build/
 out/
-bin/
 target/
 *.exe
 *.dll
@@ -36,9 +34,10 @@ desktop.ini
 *.log
 .dev-data/
 .tmp/
+bin/
 
-# Wails 构建产物（可重建；build/ 下的图标与清单模板除外）
-cmd/bookrest/build/bin/
+# 桌面壳（Wails）构建产物与自动生成物
+cmd/bookrest/build/
 cmd/bookrest/frontend/
 cmd/bookrest/wailsjs/
 
