@@ -613,7 +613,8 @@
     T.discover(opts).then(function (res) {
       btn.disabled = false; btn.textContent = '重新扫描';
       $('#dwProgress').textContent = '遍历 ' + res.scannedDirs + ' 个目录 / 命中 ' + res.scannedFiles + ' 个文件，用时 ' + (res.elapsedMs / 1000).toFixed(1) + ' 秒'
-        + (res.truncated ? '（已达时间上限，结果可能不全）' : '');
+        + (res.truncated ? '（已达时间上限，结果可能不全）' : '')
+        + ' · 只读遍历，未写入任何文件';
       var hits = res.hits || [];
       if (!hits.length) { $('#dwResults').innerHTML = '<div class="muted">没有找到达到阈值的目录（可以调小「最少本数」或放宽排除规则再试）</div>'; return; }
       $('#dwResults').innerHTML = '<div class="gl" style="font-size:var(--fs-12);color:var(--dim);margin-bottom:var(--sp-1)">候选库目录（' + hits.length + ' 个）</div>'
