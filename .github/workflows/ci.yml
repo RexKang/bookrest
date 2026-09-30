@@ -6,7 +6,8 @@ on:
   pull_request:
 
 jobs:
-  gate:
+  # 内核与 CLI：全平台可跑（桌面壳需要 WebView2/GTK 头文件，单独一个 job）
+  kernel:
     strategy:
       fail-fast: false
       matrix:
@@ -18,10 +19,25 @@ jobs:
         with:
           go-version: "1.25"
       - name: vet
-        run: go vet ./...
+        run: go vet ./internal/... ./cmd/bookrest-cli ./tools/...
       - name: build
-        run: go build ./...
+        run: go build ./internal/... ./cmd/bookrest-cli ./tools/...
       - name: test
-        run: go test ./... -count=1
+        run: go test ./internal/... ./tools/... -count=1
       - name: 测试数据预算自检（dry-run，不写盘）
         run: go run ./tools/testdata-gen --scale l3 --out ./tmp-testlib --dry-run
+
+  # 桌面壳（Wails v2 + WebView2）：只在 Windows 上构建验证
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: 安装 Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+      - name: 构建桌面应用
+        run: cd cmd/bookrest && wails build -clean
+      - name: 确认产物
+        run: ls -l cmd/bookrest/build/bin/
