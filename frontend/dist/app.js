@@ -1,6 +1,6 @@
 /* 拾书 Bookrest 前端
- * 传输层抽象：桌面壳（Wails 绑定）与开发服务器（HTTP）走同一套调用签名。
- * 视图：书架视图（架层+书脊+拖拽）· 封面墙 · 体检报告 · 详情抽屉 · 设置 · 离线只读横幅
+ * 传输层抽象：桌面壳（Wails 绑定）与 B/S 模式（HTTP）走同一套调用签名。
+ * 视图：书架视图（架层+书脊+拖拽）· 封面墙 · 体检报告 · 详情抽屉 · 设置（右上齿轮）· 全盘找书
  */
 (function () {
   'use strict';
@@ -16,6 +16,7 @@
   };
   var T = hasWails ? {
     mode: 'wails',
+    version: function () { return window.go.main.App.AppVersion(); },
     libraries: function () { return window.go.main.App.Libraries(); },
     addLibrary: function (root) { return window.go.main.App.AddLibrary(root); },
     setActive: function (root) { return window.go.main.App.SetActiveLibrary(root); },
@@ -36,10 +37,14 @@
     openFile: function (id) { return window.go.main.App.OpenFile(id); },
     revealFile: function (id) { return window.go.main.App.RevealFile(id); },
     copyPath: function (id) { return window.go.main.App.CopyPath(id); },
+    drives: function () { return window.go.main.App.Drives(); },
+    discover: function (o) { return window.go.main.App.Discover(o); },
     pickDir: function () { return window.go.main.Shell.PickLibraryDir(); },
+    openInBrowser: function () { return window.go.main.Shell.OpenInBrowser(); },
     on: function (ev, cb) { if (window.runtime) window.runtime.EventsOn(ev, cb); }
   } : {
     mode: 'http',
+    version: function () { return HTTP.get('/api/version').then(function (v) { return v.version }); },
     libraries: function () { return HTTP.get('/api/libraries'); },
     addLibrary: function (root) { return HTTP.post('/api/library/add', { root: root }); },
     setActive: function (root) { return HTTP.post('/api/library/active', { root: root }); },
@@ -60,10 +65,14 @@
     openFile: function (id) { return HTTP.post('/api/open', { id: id }); },
     revealFile: function (id) { return HTTP.post('/api/reveal', { id: id }); },
     copyPath: function (id) { return HTTP.post('/api/copy', { id: id }); },
+    drives: function () { return HTTP.get('/api/drives'); },
+    discover: function (o) { return HTTP.post('/api/discover', o); },
     pickDir: null,
-    on: function () { /* dev 模式无事件流 */ }
+    openInBrowser: null,
+    on: function () { /* B/S 模式本身就是浏览器，无需事件流 */ }
   };
   function thumbUrl(id) { return '/thumb?id=' + encodeURIComponent(id); }
+  function errText(e) { return (e && e.message) ? e.message : String(e); }
 
   // ---------- 状态 ----------
   var S = {
@@ -76,12 +85,18 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] }); }
   function toast(msg, ms) {
     var t = $('#toast'); t.textContent = msg; t.classList.remove('hidden');
-    clearTimeout(t._h); t._h = setTimeout(function () { t.classList.add('hidden') }, ms || 2200);
+    clearTimeout(t._h); t._h = setTimeout(function () { t.classList.add('hidden') }, ms || 2400);
   }
   function num(v) { var n = parseFloat(v); return isNaN(n) ? 1e9 : n; }
+  function openModal(html, wide) {
+    $('#modal').innerHTML = '<div class="box' + (wide ? ' wide' : '') + '">' + html + '</div>';
+    $('#modal').classList.remove('hidden');
+  }
+  function closeModal() { $('#modal').classList.add('hidden'); $('#modal').innerHTML = ''; }
 
   // ---------- 启动 ----------
   function boot() {
+    T.version().then(function (v) { $('#ver').textContent = 'v' + (v || '?'); }).catch(function () { $('#ver').textContent = ''; });
     Promise.all([T.status(), T.settings()]).then(function (r) {
       S.status = r[0]; S.settings = r[1];
       applyTheme();
@@ -97,6 +112,10 @@
     });
     T.on('sync:state', function (s) { if (s && s.ok === false) toast('库内快照未回写：' + (s.error || ''), 4000); });
     T.on('sync:conflict', function (c) { toast('检测到另一台设备的改动，已备份库内版本：' + c.backup, 6000); });
+    T.on('discover:progress', function (p) {
+      var el = $('#dwProgress');
+      if (el) el.textContent = '已扫描 ' + p.dirs + ' 个目录 / ' + p.files + ' 个候选文件…';
+    });
     wireEvents();
   }
 
@@ -122,7 +141,7 @@
         + '<span class="dot' + (l.online ? '' : ' off') + '"></span>'
         + '<span class="name">' + esc(l.name || l.root) + '</span>'
         + '<span class="count">' + (l.total || 0) + '</span></div>';
-    }).join('') || '<div class="muted" style="font-size:12px">尚未添加库</div>';
+    }).join('') || '<div class="muted" style="font-size:var(--fs-12)">尚未添加库</div>';
     libs.querySelectorAll('.lib-item').forEach(function (el) {
       el.onclick = function () { T.setActive(el.dataset.root).then(function () { toast('已切换库'); bootRefresh(); }); };
     });
@@ -133,7 +152,7 @@
       var count = S.items.filter(function (i) { return i.shelfId === s.id }).length;
       return '<div class="shelf-item' + active + '" data-id="' + esc(s.id) + '">'
         + '<span class="name">' + esc(s.name) + '</span><span class="count">' + count + '</span></div>';
-    }).join('') || '<div class="muted" style="font-size:12px">暂无书架（下方按系列自动排列）</div>';
+    }).join('') || '<div class="muted" style="font-size:var(--fs-12)">暂无书架（下方按系列自动排列）</div>';
     sh.querySelectorAll('.shelf-item').forEach(function (el) {
       el.onclick = function () {
         S.activeShelf = (S.activeShelf === el.dataset.id) ? '' : el.dataset.id;
@@ -155,7 +174,7 @@
     Object.keys(series).sort().slice(0, 40).forEach(function (t) {
       f += '<div class="filter-item' + (S.filterSeries === t ? ' active' : '') + '" data-series="' + esc(t) + '"><span class="name">' + esc(t) + '</span><span class="count">' + series[t] + '</span></div>';
     });
-    $('#filters').innerHTML = f || '<div class="muted" style="font-size:12px">—</div>';
+    $('#filters').innerHTML = f || '<div class="muted" style="font-size:var(--fs-12)">—</div>';
     $('#filters').querySelectorAll('.filter-item').forEach(function (el) {
       el.onclick = function () {
         if (el.dataset.tag) S.filterTag = S.filterTag === el.dataset.tag ? '' : el.dataset.tag;
@@ -179,7 +198,7 @@
     var seriesN = {}; list.forEach(function (i) { if (i.series) seriesN[i.series] = 1 });
     $('#stats').textContent = '共 ' + S.items.length + ' 本，显示 ' + list.length + ' 本'
       + (S.view === 'shelf' ? '，' + Object.keys(seriesN).length + ' 个系列' : '')
-      + (T.mode === 'http' ? '（开发模式）' : '');
+      + (T.mode === 'http' ? '（B/S 模式）' : '');
   }
   function renderStatus() {
     var b = $('#offline');
@@ -229,14 +248,12 @@
   function renderShelfView() {
     var list = filtered();
     var rows = [];
-    // 1) 用户书架（按自定义顺序）
     S.shelves.forEach(function (s) {
       if (S.activeShelf && S.activeShelf !== s.id) return;
       var items = list.filter(function (i) { return i.shelfId === s.id });
       items.sort(function (a, b) { return (a.index || 0) - (b.index || 0) });
       rows.push({ id: s.id, name: s.name, items: items, custom: true });
     });
-    // 2) 未归架的书按系列自动成行
     var unshelved = list.filter(function (i) { return !i.shelfId });
     if (!S.activeShelf) {
       var bySeries = {};
@@ -245,7 +262,7 @@
         rows.push({ id: '', name: k, items: sorted(bySeries[k]), custom: false });
       });
     }
-    if (!rows.length) { $('#content').innerHTML = '<div class="empty-state">没有可显示的条目<br><span class="muted">换个过滤条件，或先扫描库</span></div>'; return; }
+    if (!rows.length) { $('#content').innerHTML = '<div class="empty-state">没有可显示的条目<br><span class="muted">换个过滤条件，或先点左下「重新扫描」</span></div>'; return; }
 
     var html = rows.map(function (r) {
       var spines = r.items.map(function (i) { return spineHTML(i) }).join('');
@@ -294,7 +311,6 @@
         el.classList.remove('drop-before', 'drop-after');
         var list = Array.prototype.slice.call(row.querySelectorAll('.spine'));
         var idx = list.indexOf(el) + (after ? 1 : 0);
-        // 同书架内调整时，移除自身会让后续索引前移
         var cur = S.items.filter(function (x) { return x.id === dragId })[0];
         if (cur && cur.shelfId === shelfId && cur.index < idx) idx -= 1;
         if (!shelfId) { toast('请拖到某个书架里（先新建书架）'); return; }
@@ -349,7 +365,7 @@
       var K = { gap: '缺卷', dup: '重复', corrupt: '损坏', nocover: '无封面', naming: '命名待整理' };
       var cards = '';
       if (!rep.findings || !rep.findings.length) {
-        cards = '<div class="rep-card"><h3>未发现问题</h3><div class="row">共 ' + rep.total + ' 本，四类体检全部通过。</div></div>';
+        cards = '<div class="rep-card"><h3>未发现问题</h3><div class="row">共 ' + rep.total + ' 本，五类体检全部通过。</div></div>';
       } else {
         rep.findings.forEach(function (f, idx) {
           var body = '';
@@ -408,10 +424,10 @@
     var shelfName = (S.shelves.filter(function (s) { return s.id === i.shelfId })[0] || {}).name || '未归架';
     var stars = '';
     for (var k = 1; k <= 5; k++) stars += '<span class="' + (i.rating >= k ? 'on' : '') + '" data-star="' + k + '">★</span>';
-    d.innerHTML = (i.failed ? '<div class="noimg" style="aspect-ratio:2/3;display:flex;align-items:center;justify-content:center;color:var(--dim)">损坏文件</div>'
-      : '<img class="cover" src="' + thumbUrl(i.id) + '" alt="" onerror="this.outerHTML=\'<div class=&quot;noimg&quot; style=&quot;aspect-ratio:2/3&quot;>无封面</div>\'">')
+    d.innerHTML = (i.failed ? '<div class="noimg">损坏文件</div>'
+      : '<img class="cover" src="' + thumbUrl(i.id) + '" alt="" onerror="this.outerHTML=\'<div class=&quot;noimg&quot;>无封面</div>\'">')
       + '<h2>' + esc(i.title || i.rel) + '</h2>'
-      + '<div class="muted" style="font-size:12px">' + esc(i.rel) + '</div>'
+      + '<div class="muted" style="font-size:var(--fs-12)">' + esc(i.rel) + '</div>'
       + '<div class="kv">'
       + '<b>系列</b><span class="val">' + esc(i.series || '—') + '</span>'
       + '<b>卷号</b><span class="val">' + esc(i.number || '—') + '</span>'
@@ -422,9 +438,9 @@
       + (i.failed ? '<b>状态</b><span class="val bad">归档无法解析（已列入体检报告）</span>' : '')
       + (i.missing ? '<b>状态</b><span class="val bad">文件缺失（摆放已保留）</span>' : '')
       + '</div>'
-      + '<div><b class="muted" style="font-weight:400;font-size:12px">评分</b><div class="stars" id="stars">' + stars + '</div></div>'
-      + '<div style="margin-top:10px"><b class="muted" style="font-weight:400;font-size:12px">标签</b><div id="tagList" style="margin-top:4px">'
-      + ((i.tags || []).map(function (t) { return '<span class="tag">#' + esc(t) + ' <a href="#" data-rmtag="' + esc(t) + '" style="color:inherit">×</a></span>' }).join('') || '<span class="muted" style="font-size:12px">无</span>')
+      + '<div><b class="muted">评分</b><div class="stars" id="stars">' + stars + '</div></div>'
+      + '<div style="margin-top:10px"><b class="muted">标签</b><div id="tagList" style="margin-top:4px">'
+      + ((i.tags || []).map(function (t) { return '<span class="tag">#' + esc(t) + ' <a href="#" data-rmtag="' + esc(t) + '" style="color:inherit">×</a></span>' }).join('') || '<span class="muted" style="font-size:var(--fs-12)">无</span>')
       + '</div><div class="taginput"><input id="tagInput" placeholder="加标签后回车"><button class="small" id="tagAdd">添加</button></div></div>'
       + '<div class="actions">'
       + '<button class="primary" id="dOpen">用默认程序打开</button>'
@@ -436,9 +452,11 @@
     d.classList.add('open');
 
     function saveOv(patch) {
-      var ov = { title: patch.title !== undefined ? patch.title : (i.title !== i.origTitle ? i.title : ''),
-                 tags: patch.tags !== undefined ? patch.tags : (i.tags || []),
-                 rating: patch.rating !== undefined ? patch.rating : (i.rating || 0) };
+      var ov = {
+        title: patch.title !== undefined ? patch.title : (i.title !== i.origTitle ? i.title : ''),
+        tags: patch.tags !== undefined ? patch.tags : (i.tags || []),
+        rating: patch.rating !== undefined ? patch.rating : (i.rating || 0)
+      };
       T.setOverride(i.id, ov).then(function () { toast('已保存（只写意图，不改文件）'); refreshAll(); openDetail(id); });
     }
     d.querySelectorAll('#stars span').forEach(function (s) {
@@ -457,8 +475,8 @@
         saveOv({ tags: (i.tags || []).filter(function (t) { return t !== a.dataset.rmtag }) });
       };
     });
-    $('#dOpen').onclick = function () { T.openFile(i.id).then(function (p) { toast('已交给系统默认程序：' + p) }).catch(function (e) { toast('打开失败：' + e) }) };
-    $('#dReveal').onclick = function () { T.revealFile(i.id).then(function (p) { toast('已在文件管理器中定位') }).catch(function (e) { toast('定位失败：' + e) }) };
+    $('#dOpen').onclick = function () { T.openFile(i.id).then(function (p) { toast('已交给系统默认程序：' + p) }).catch(function (e) { toast('打开失败：' + errText(e)) }) };
+    $('#dReveal').onclick = function () { T.revealFile(i.id).then(function () { toast('已在文件管理器中定位') }).catch(function (e) { toast('定位失败：' + errText(e)) }) };
     $('#dCopy').onclick = function () {
       T.copyPath(i.id).then(function (p) {
         if (navigator.clipboard) navigator.clipboard.writeText(p);
@@ -473,23 +491,37 @@
   }
   function closeDetail() { $('#detail').classList.remove('open') }
 
-  // ---------- 设置 ----------
+  // ---------- 设置（右上角齿轮） ----------
   function openSettings() {
     var s = S.settings;
     var row = function (label, html) { return '<div class="form-row"><label>' + label + '</label><div>' + html + '</div></div>' };
-    $('#modal').innerHTML = '<div class="box"><h3>设置</h3>'
-      + row('镜像目录（本机运行时数据）', '<span class="muted">' + esc(s.mirror_dir || '') + '</span>')
+    var bsRow = T.mode === 'wails'
+      ? '<div class="field-group"><div class="gl">访问方式</div>'
+        + '<div style="display:flex;align-items:center;gap:var(--sp-2)">'
+        + '<button class="small" id="stBrowser">在浏览器中打开</button>'
+        + '<span class="muted" style="font-size:var(--fs-12)">同一套界面，B/S 模式；也可以直接运行 <code>bookrest.exe --serve</code></span>'
+        + '</div></div>'
+      : '<div class="field-group"><div class="gl">访问方式</div><div class="muted" style="font-size:var(--fs-12)">当前就是 B/S 模式（浏览器访问）；桌面窗口版运行 bookrest.exe 即可</div></div>';
+    openModal('<h3>设置</h3>'
+      + row('版本', '<span class="muted">' + esc($('#ver').textContent) + '</span>')
+      + row('镜像目录（本机运行时数据）', '<span class="muted" style="font-size:var(--fs-12)">' + esc(s.mirror_dir || '') + '</span>')
       + row('库内快照回写', '<input type="checkbox" id="stWriteBack"' + (s.write_back_enabled ? ' checked' : '') + '>')
       + row('同步索引到库内', '<input type="checkbox" id="stSyncIndex"' + (s.sync_index ? ' checked' : '') + '>')
       + row('同步缩略图到库内', '<input type="checkbox" id="stSyncThumbs"' + (s.sync_thumbs ? ' checked' : '') + '>')
-      + row('回写去抖（毫秒）', '<input type="number" id="stDebounce" value="' + (s.sync_debounce_ms || 5000) + '" style="width:110px">')
-      + row('扫描并发', '<input type="number" id="stWorkers" value="' + (s.scan_workers || 4) + '" style="width:110px">')
+      + row('回写去抖（毫秒）', '<input type="number" id="stDebounce" value="' + (s.sync_debounce_ms || 5000) + '">')
+      + row('扫描并发', '<input type="number" id="stWorkers" value="' + (s.scan_workers || 4) + '">')
       + row('主题', '<select id="stTheme"><option value="dark"' + (s.theme !== 'light' ? ' selected' : '') + '>深色</option><option value="light"' + (s.theme === 'light' ? ' selected' : '') + '>浅色</option></select>')
       + row('书脊样式', '<select id="stSpine"><option value="wood"' + (s.spine_style !== 'plain' ? ' selected' : '') + '>木质</option><option value="plain"' + (s.spine_style === 'plain' ? ' selected' : '') + '>极简</option></select>')
-      + '<div class="muted" style="font-size:12px;margin-top:10px">关闭「库内快照回写」= 纯本机模式：库目录零写入，适合只读挂载。</div>'
-      + '<div class="foot"><button class="ghost" id="stCancel">取消</button><button class="primary" id="stSave">保存</button></div></div>';
-    $('#modal').classList.remove('hidden');
+      + bsRow
+      + '<div class="muted" style="font-size:var(--fs-12);margin-top:var(--sp-2)">关闭「库内快照回写」= 纯本机模式：库目录零写入，适合只读挂载。</div>'
+      + '<div class="foot"><button class="ghost" id="stCancel">取消</button><button class="primary" id="stSave">保存</button></div>');
     $('#stCancel').onclick = closeModal;
+    if ($('#stBrowser')) {
+      $('#stBrowser').onclick = function () {
+        T.openInBrowser().then(function (url) { toast('已在浏览器打开：' + url, 4000); closeModal(); })
+          .catch(function (e) { toast('启动失败：' + errText(e)); });
+      };
+    }
     $('#stSave').onclick = function () {
       var next = Object.assign({}, s, {
         write_back_enabled: $('#stWriteBack').checked,
@@ -503,23 +535,122 @@
       T.saveSettings(next).then(function () { S.settings = next; applyTheme(); closeModal(); toast('设置已保存'); });
     };
   }
-  function closeModal() { $('#modal').classList.add('hidden'); $('#modal').innerHTML = '' }
+
+  // ---------- 全盘找书 ----------
+  var DISCOVER_EXTS = ['.epub', '.pdf', '.cbz', '.cbr', '.mobi', '.azw3', '.fb2'];
+  function openDiscover() {
+    T.drives().then(function (drives) {
+      drives = drives || [];
+      if (!drives.length) { toast('没有找到可读盘符'); return; }
+      var chip = function (id, label, on, sub) {
+        return '<label class="chip' + (on ? ' on' : '') + '" data-chip="' + id + '">'
+          + '<input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '>' + esc(label)
+          + (sub ? '<span class="muted">' + esc(sub) + '</span>' : '') + '</label>';
+      };
+      var lastDrives = (S.settings.discover_drives || '').split(',').filter(Boolean);
+      var html = '<h3>全盘找书</h3>'
+        + '<div class="muted" style="font-size:var(--fs-12)">只读遍历磁盘，按目录统计书籍数量，列出候选库目录。不导入、不复制、不修改任何文件。</div>'
+        + '<div class="field-group"><div class="gl">扫描哪些盘</div><div class="chips">'
+        + drives.map(function (d) {
+          var on = lastDrives.length ? lastDrives.indexOf(d.letter) >= 0 : d.letter === (S.status.root || 'D:').slice(0, 2);
+          return chip('dw' + d.letter.replace(':', ''), d.letter, on, d.hasBooks ? '已添加为库' : '');
+        }).join('') + '</div></div>'
+        + '<div class="field-group"><div class="gl">排除</div><div class="chips">'
+        + chip('dwExCommon', '屏蔽常见目录（系统 / 开发 / 缓存）', true, '')
+        + '</div><div style="margin-top:var(--sp-2)"><input id="dwExExtra" placeholder="额外排除的目录名，逗号分隔（如 Comics_old, 临时）" style="width:100%;font-size:var(--fs-13);padding:var(--sp-1) var(--sp-2);border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg);color:var(--fg)"></div></div>'
+        + '<div class="field-group"><div class="gl">文件类型</div><div class="chips">'
+        + DISCOVER_EXTS.map(function (e) { return chip('dwExt' + e.slice(1), e, e === '.epub' || e === '.pdf' || e === '.cbz', ''); }).join('')
+        + '</div></div>'
+        + '<div class="field-group"><div class="gl">范围</div>'
+        + '<div class="chips">'
+        + '<label class="chip on">最少本数 <input type="number" id="dwMin" value="5" style="width:56px;background:transparent;border:0;color:var(--fg)"></label>'
+        + '<label class="chip on">最大深度 <input type="number" id="dwDepth" value="6" style="width:56px;background:transparent;border:0;color:var(--fg)"></label>'
+        + '<label class="chip on">时间上限(秒) <input type="number" id="dwSecs" value="120" style="width:56px;background:transparent;border:0;color:var(--fg)"></label>'
+        + '</div></div>'
+        + '<div id="dwProgress" class="muted" style="font-size:var(--fs-12);min-height:18px"></div>'
+        + '<div id="dwResults" style="margin-top:var(--sp-2)"></div>'
+        + '<div class="foot"><button class="ghost" id="dwCancel">关闭</button><button class="primary" id="dwRun">开始扫描</button></div>';
+      openModal(html, true);
+      // chip 本身是 label，点击由浏览器原生切换 checkbox；这里只同步高亮态
+      $('#modal').querySelectorAll('.chip input').forEach(function (cb) {
+        cb.addEventListener('change', function () { cb.closest('.chip').classList.toggle('on', cb.checked); });
+      });
+      $('#dwCancel').onclick = closeModal;
+      $('#dwRun').onclick = function () { runDiscover(drives); };
+    }).catch(function (e) { toast('读取盘符失败：' + errText(e)); });
+  }
+
+  function runDiscover() {
+    var pick = function (id) { var el = $('#' + id); return !!(el && el.checked); };
+    var drives = [];
+    $('#modal').querySelectorAll('.chips .chip').forEach(function (c) {
+      var cb = c.querySelector('input'); if (!cb || !cb.id) return;
+      if (cb.id.indexOf('dw') === 0 && /^dw[A-Z]$/.test(cb.id) && cb.checked) drives.push(cb.id.slice(2) + ':');
+    });
+    var exts = DISCOVER_EXTS.filter(function (e) { return pick('dwExt' + e.slice(1)) });
+    if (!drives.length) { toast('至少选一个盘'); return; }
+    if (!exts.length) { toast('至少选一种文件类型'); return; }
+    var opts = {
+      drives: drives,
+      extensions: exts,
+      excludeCommon: pick('dwExCommon'),
+      extraExcludes: ($('#dwExExtra').value || '').split(',').map(function (s) { return s.trim() }).filter(Boolean),
+      maxDepth: parseInt($('#dwDepth').value, 10) || 6,
+      minBooks: parseInt($('#dwMin').value, 10) || 5,
+      maxSeconds: parseInt($('#dwSecs').value, 10) || 120
+    };
+    var btn = $('#dwRun');
+    btn.disabled = true; btn.textContent = '扫描中…';
+    $('#dwResults').innerHTML = '';
+    $('#dwProgress').textContent = '正在遍历 ' + drives.join(' ') + ' …';
+    T.discover(opts).then(function (res) {
+      btn.disabled = false; btn.textContent = '重新扫描';
+      $('#dwProgress').textContent = '遍历 ' + res.scannedDirs + ' 个目录 / 命中 ' + res.scannedFiles + ' 个文件，用时 ' + (res.elapsedMs / 1000).toFixed(1) + ' 秒'
+        + (res.truncated ? '（已达时间上限，结果可能不全）' : '');
+      var hits = res.hits || [];
+      if (!hits.length) { $('#dwResults').innerHTML = '<div class="muted">没有找到达到阈值的目录（可以调小「最少本数」或放宽排除规则再试）</div>'; return; }
+      $('#dwResults').innerHTML = '<div class="gl" style="font-size:var(--fs-12);color:var(--dim);margin-bottom:var(--sp-1)">候选库目录（' + hits.length + ' 个）</div>'
+        + hits.map(function (h, idx) {
+          var exts2 = Object.keys(h.exts || {}).map(function (k) { return k + '×' + h.exts[k] }).join(' ');
+          return '<div class="hit"><div><div class="path">' + esc(h.dir) + '</div><div class="sub">' + h.books + ' 本 · ' + esc(exts2) + '</div></div>'
+            + '<button class="small primary" data-addlib="' + idx + '">添加为库</button></div>';
+        }).join('');
+      $('#modal').querySelectorAll('[data-addlib]').forEach(function (b) {
+        b.onclick = function () {
+          var h = hits[parseInt(b.dataset.addlib, 10)];
+          b.disabled = true; b.textContent = '添加中…';
+          T.addLibrary(h.dir).then(function () {
+            b.textContent = '已添加'; toast('已添加库：' + h.dir, 3000);
+            bootRefresh();
+          }).catch(function (e) { b.disabled = false; b.textContent = '添加为库'; toast('添加失败：' + errText(e)); });
+        };
+      });
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = '开始扫描';
+      $('#dwProgress').textContent = '';
+      toast('扫描失败：' + errText(e));
+    });
+  }
 
   // ---------- 空状态 ----------
   function renderEmptyState() {
     $('#content').innerHTML = '<div class="empty-state">'
       + '<div style="font-size:40px">📚</div>'
       + '<div>还没有添加库目录</div>'
-      + '<div class="muted" style="font-size:13px">拾书不会导入或搬动你的文件，只读取你已有的目录</div>'
-      + '<button class="primary" id="emptyAdd">选择库目录</button></div>';
+      + '<div class="muted" style="font-size:var(--fs-13)">拾书不会导入或搬动你的文件，只读取你已有的目录</div>'
+      + '<div style="display:flex;gap:var(--sp-2);margin-top:var(--sp-2)">'
+      + '<button class="primary" id="emptyAdd">选择库目录</button>'
+      + '<button id="emptyDiscover">全盘找书</button>'
+      + '</div></div>';
     $('#emptyAdd').onclick = addLibrary;
+    $('#emptyDiscover').onclick = openDiscover;
   }
   function addLibrary() {
-    var ask = T.pickDir ? T.pickDir() : Promise.resolve(prompt('输入库根目录的完整路径（例如 D:\\Books）：'));
+    var ask = T.pickDir ? T.pickDir() : Promise.resolve(prompt('输入库根目录的完整路径（例如 D:\\\\Books）：'));
     ask.then(function (root) {
       if (!root) return;
       return T.addLibrary(root.trim()).then(function () { toast('已添加库'); bootRefresh(); });
-    }).catch(function (e) { toast('添加失败：' + (e && e.message ? e.message : e)) });
+    }).catch(function (e) { toast('添加失败：' + errText(e)) });
   }
   function bootRefresh() { T.status().then(function (s) { S.status = s; renderStatus(); refreshAll(); }); }
 
@@ -531,12 +662,17 @@
     $('#search').oninput = function (e) { S.search = e.target.value; renderCurrent(); };
     $('#sortBy').onchange = function (e) { S.sortBy = e.target.value; renderCurrent(); };
     $('#btnScan').onclick = function () {
-      if (!S.status.online) { toast('库离线，无法扫描'); return; }
+      if (!S.status.root) { toast('还没有添加库目录：先点「＋ 添加库目录」，或用「全盘找书」搜一遍磁盘', 4200); return; }
+      if (!S.status.online) { toast('库离线（目录不存在），无法扫描'); return; }
       showScan(true);
-      T.scan().then(function (sum) { showScan(false); toast('扫描完成：新增 ' + sum.added + ' / 共 ' + sum.total + ' 本（' + sum.millis + 'ms）', 4000); refreshAll(); })
-        .catch(function (e) { showScan(false); toast('扫描失败：' + (e && e.message ? e.message : e)) });
+      T.scan().then(function (sum) {
+        showScan(false);
+        toast('扫描完成：新增 ' + sum.added + ' / 共 ' + sum.total + ' 本（' + sum.millis + 'ms）', 4000);
+        refreshAll();
+      }).catch(function (e) { showScan(false); toast('扫描失败：' + errText(e), 4000) });
     };
     $('#btnAddLib').onclick = addLibrary;
+    $('#btnDiscover').onclick = openDiscover;
     $('#btnSettings').onclick = openSettings;
     $('#btnNewShelf').onclick = function () {
       var name = prompt('新书架名称：', '我的书架'); if (!name) return;

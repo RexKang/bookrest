@@ -9,12 +9,18 @@
 <body>
 <div id="app">
   <aside id="sidebar">
-    <div class="brand">拾书 <span class="muted">Bookrest</span></div>
+    <div class="brand">
+      <span class="brand-name">拾书 <span class="muted">Bookrest</span></span>
+      <span class="ver" id="ver" title="版本号">v—</span>
+    </div>
 
     <div class="side-block">
       <div class="side-title">库</div>
       <div id="libList" class="lib-list"></div>
-      <button id="btnAddLib" class="ghost small">＋ 添加库目录</button>
+      <div class="btn-row">
+        <button id="btnAddLib" class="ghost small">＋ 添加库目录</button>
+        <button id="btnDiscover" class="ghost small" title="在整块磁盘上找书，生成候选库列表">全盘找书</button>
+      </div>
     </div>
 
     <div class="side-block grow">
@@ -29,8 +35,8 @@
     </div>
 
     <div class="side-actions">
-      <button id="btnScan" class="primary">扫描库</button>
-      <button id="btnSettings" class="ghost">设置</button>
+      <button id="btnScan" class="primary" title="只读扫描：更新索引与封面缓存，不导入、不移动、不修改任何文件">重新扫描</button>
+      <div class="hint" id="scanHint">扫描 = 只读更新索引，不动你的文件</div>
     </div>
   </aside>
 
@@ -48,6 +54,7 @@
         <option value="recent">按加入时间</option>
       </select>
       <span id="stats" class="muted"></span>
+      <button id="btnSettings" class="gear" title="设置" aria-label="设置">⚙</button>
     </header>
 
     <div id="offline" class="banner hidden"></div>
