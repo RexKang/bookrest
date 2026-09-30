@@ -86,6 +86,11 @@ func New(cfgPath string, emit Emit) (*App, error) {
 		return nil, err
 	}
 	a := &App{cfg: cfg, cfgFn: cfgPath, emit: emit, colors: map[string]string{}, thumbs: map[string][]byte{}}
+	// 没有库时也要有空的索引/意图/扫描状态：任何查询路径都不允许出现空指针
+	// （B/S 模式下 /api/items 之类的请求可以来自浏览器，崩一次就等于服务停摆）
+	a.idx = store.NewIndex(filepath.Join(cfg.Settings.MirrorDir, "empty", "index.jsonl"))
+	a.shelf = store.NewShelf("local")
+	a.state = store.NewScanState("")
 	if err := os.MkdirAll(cfg.Settings.MirrorDir, 0o755); err != nil {
 		return nil, err
 	}
