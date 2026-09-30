@@ -1,4 +1,7 @@
-// Command bookrest 是拾书桌面应用（Wails v2 外壳 + 内嵌前端）。
+// Command bookrest 是拾书桌面应用，同一份内核与前端支持两种模式：
+//
+//	C/S（默认）：Wails v2 原生窗口 + 内嵌前端
+//	B/S：bookrest.exe --serve [--addr 127.0.0.1:8788]，浏览器访问同一套界面
 //
 // 设计要点（见 docs/260929-拾书-详细设计-v0.1.0.md）：
 //   - 外壳只做「窗口 + 事件 + 资源」三件事，业务全在 internal/app
@@ -8,14 +11,19 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/RexKang/bookrest/frontend"
 	"github.com/RexKang/bookrest/internal/app"
 	"github.com/RexKang/bookrest/internal/config"
+	"github.com/RexKang/bookrest/internal/server"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -28,7 +36,38 @@ func main() {
 	if err != nil {
 		log.Fatal("初始化失败: ", err)
 	}
-	shell := &Shell{}
+	shell := &Shell{app: a}
+
+	// 命令行开关
+	addr := "127.0.0.1:8788"
+	serveMode := false
+	for i, arg := range os.Args[1:] {
+		switch arg {
+		case "--serve", "-s", "serve":
+			serveMode = true
+		case "--version", "-v":
+			fmt.Printf("拾书 Bookrest %s\n", app.Version)
+			return
+		case "--addr":
+			if i+2 < len(os.Args) {
+				addr = os.Args[i+2]
+			}
+		case "--help", "-h":
+			fmt.Println("拾书 Bookrest " + app.Version)
+			fmt.Println("  （无参数）            打开桌面窗口（C/S）")
+			fmt.Println("  --serve [--addr 地址] 以 B/S 模式启动本地服务，浏览器访问")
+			fmt.Println("  --version             显示版本号")
+			return
+		}
+	}
+
+	// B/S 模式：同一份内核与前端，换 HTTP 传输
+	if serveMode {
+		if err := server.Run(a, server.Options{Addr: addr, Dist: frontend.Assets()}); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	err = wails.Run(&options.App{
 		Title:     "拾书 Bookrest",
@@ -55,7 +94,25 @@ func main() {
 
 // Shell 是外壳专有能力的绑定（需要 Wails 上下文的东西都放这里）。
 type Shell struct {
-	ctx context.Context
+	ctx     context.Context
+	app     *app.App
+	webOnce sync.Once
+}
+
+// OpenInBrowser 在进程内起一个 B/S 服务（同一套前端），并用系统浏览器打开。
+func (s *Shell) OpenInBrowser() (string, error) {
+	const addr = "127.0.0.1:8788"
+	s.webOnce.Do(func() {
+		go func() {
+			if err := server.Run(s.app, server.Options{Addr: addr, Dist: frontend.Assets()}); err != nil {
+				log.Println("B/S 模式启动失败:", err)
+			}
+		}()
+		time.Sleep(250 * time.Millisecond)
+	})
+	url := "http://" + addr
+	runtime.BrowserOpenURL(s.ctx, url)
+	return url, nil
 }
 
 // PickLibraryDir 打开系统目录选择器，返回用户选择的库根目录。

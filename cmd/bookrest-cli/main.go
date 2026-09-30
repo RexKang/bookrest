@@ -1,4 +1,4 @@
-// Command bookrest-cli 是开发/调试工具（产品本体是 cmd/bookrest 桌面应用）。
+// Command bookrest-cli 是开发/调试工具（产品本体是 cmd/bookrest，它同时支持 C/S 窗口与 B/S 服务两种模式）。
 //
 //	bookrest-cli scan   --root <库根>
 //	bookrest-cli shelf  --root <库根> [--series <系列>]
@@ -10,8 +10,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,7 +19,7 @@ import (
 	"github.com/RexKang/bookrest/internal/config"
 	"github.com/RexKang/bookrest/internal/domain"
 	"github.com/RexKang/bookrest/internal/report"
-	"github.com/RexKang/bookrest/internal/store"
+	"github.com/RexKang/bookrest/internal/server"
 )
 
 func main() {
@@ -69,7 +67,11 @@ func main() {
 	case "report":
 		cmdReport(a, *asJSON)
 	case "serve":
-		cmdServe(a, *addr, *distDir)
+		// 与产品 B/S 模式共用同一份实现（internal/server）
+		if err := server.Run(a, server.Options{Addr: *addr, DistDir: *distDir, Dev: true}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintln(os.Stderr, "未知子命令:", cmd)
 		os.Exit(2)
@@ -193,151 +195,4 @@ func cmdReport(a *app.App, asJSON bool) {
 			}
 		}
 	}
-}
-
-// cmdServe 用真前端 + HTTP 传输跑无头冒烟（产品走 Wails 绑定）。
-func cmdServe(a *app.App, addr, dist string) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		if p == "/" {
-			p = "/index.html"
-		}
-		data, err := os.ReadFile(filepath.Join(dist, filepath.FromSlash(strings.TrimPrefix(p, "/"))))
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		switch filepath.Ext(p) {
-		case ".html":
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		case ".js":
-			w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		case ".css":
-			w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		}
-		_, _ = w.Write(data)
-	})
-	mux.HandleFunc("/thumb", func(w http.ResponseWriter, r *http.Request) {
-		data, err := a.ThumbBytes(r.URL.Query().Get("id"))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write(data)
-	})
-	jsonEP := func(path string, fn func() (any, error)) {
-		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-			v, err := fn()
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-				return
-			}
-			_ = json.NewEncoder(w).Encode(v)
-		})
-	}
-	jsonEP("/api/items", func() (any, error) { return a.Items(), nil })
-	jsonEP("/api/shelves", func() (any, error) { return a.Shelves(), nil })
-	jsonEP("/api/report", func() (any, error) { return a.Report(), nil })
-	jsonEP("/api/status", func() (any, error) { return a.Status(), nil })
-	jsonEP("/api/colors", func() (any, error) { return a.SpineColors(), nil })
-	jsonEP("/api/libraries", func() (any, error) { return a.Libraries(), nil })
-	mux.HandleFunc("/api/scan", func(w http.ResponseWriter, r *http.Request) {
-		sum, err := a.Scan()
-		writeResult(w, sum, err)
-	})
-	mux.HandleFunc("/api/move", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID      string `json:"id"`
-			ShelfID string `json:"shelfId"`
-			Index   int    `json:"index"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		writeResult(w, map[string]bool{"ok": true}, a.MoveItem(req.ID, req.ShelfID, req.Index))
-	})
-	mux.HandleFunc("/api/shelf/create", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Name string `json:"name"` }
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		sh, err := a.CreateShelf(req.Name)
-		writeResult(w, sh, err)
-	})
-	mux.HandleFunc("/api/override", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID       string         `json:"id"`
-			Override store.Override `json:"override"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		writeResult(w, map[string]bool{"ok": true}, a.SetOverride(req.ID, req.Override))
-	})
-	mux.HandleFunc("/api/open", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ ID string `json:"id"` }
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		p, err := a.OpenFile(req.ID)
-		writeResult(w, map[string]string{"path": p, "hint": "dev 模式已尝试调用系统默认程序"}, err)
-	})
-	mux.HandleFunc("/api/reveal", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ ID string `json:"id"` }
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		p, err := a.RevealFile(req.ID)
-		writeResult(w, map[string]string{"path": p}, err)
-	})
-	mux.HandleFunc("/api/copy", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ ID string `json:"id"` }
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		p, err := a.CopyPath(req.ID)
-		writeResult(w, map[string]string{"path": p}, err)
-	})
-	mux.HandleFunc("/api/shelf/rename", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		writeResult(w, map[string]bool{"ok": true}, a.RenameShelf(req.ID, req.Name))
-	})
-	mux.HandleFunc("/api/shelf/delete", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ ID string `json:"id"` }
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		writeResult(w, map[string]bool{"ok": true}, a.DeleteShelf(req.ID))
-	})
-	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			var s config.Settings
-			_ = json.NewDecoder(r.Body).Decode(&s)
-			writeResult(w, map[string]bool{"ok": true}, a.SaveSettings(s))
-			return
-		}
-		writeResult(w, a.Settings(), nil)
-	})
-	mux.HandleFunc("/api/library/add", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Root string `json:"root"` }
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		st, err := a.AddLibrary(req.Root)
-		writeResult(w, st, err)
-	})
-	mux.HandleFunc("/api/library/active", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Root string `json:"root"` }
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		writeResult(w, map[string]bool{"ok": true}, a.SetActiveLibrary(req.Root))
-	})
-	mux.HandleFunc("/api/library/remove", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Root string `json:"root"` }
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		writeResult(w, map[string]bool{"ok": true}, a.RemoveLibrary(req.Root))
-	})
-	fmt.Printf("开发服务器：http://%s（真前端 + HTTP 传输，产品本体是 Wails 桌面应用）\n", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
-}
-
-func writeResult(w http.ResponseWriter, v any, err error) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	_ = json.NewEncoder(w).Encode(v)
 }
