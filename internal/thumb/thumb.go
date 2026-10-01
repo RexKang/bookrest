@@ -56,6 +56,26 @@ func CoverJPEG(raw []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// CoverJPEGSize 按指定最大尺寸生成封面 JPEG（详情页大图用；0 表示不限）。
+func CoverJPEGSize(raw []byte, maxW, maxH int) ([]byte, error) {
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("thumb: decode: %w", err)
+	}
+	if maxW <= 0 {
+		maxW = CoverSize.X
+	}
+	if maxH <= 0 {
+		maxH = CoverSize.Y
+	}
+	scaled := Scale(img, maxW, maxH)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, scaled, &jpeg.Options{Quality: quality()}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // SpineJPEG 从已生成的封面缩略图派生书脊（不重新解码原图）。
 func SpineJPEG(coverJPEG []byte) ([]byte, error) {
 	img, err := jpeg.Decode(bytes.NewReader(coverJPEG))

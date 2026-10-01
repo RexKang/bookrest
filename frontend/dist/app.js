@@ -40,7 +40,13 @@
     drives: function () { return window.go.main.App.Drives(); },
     discover: function (o) { return window.go.main.App.Discover(o); },
     pickDir: function () { return window.go.main.Shell.PickLibraryDir(); },
+    pickImage: function () { return window.go.main.Shell.PickImageFile(); },
     openInBrowser: function () { return window.go.main.Shell.OpenInBrowser(); },
+    setCoverFromData: function (id, data, source) { return window.go.main.App.SetCoverFromData(id, data, source); },
+    setCoverFromFile: function (id, path) { return window.go.main.App.SetCoverFromFile(id, path); },
+    clearCover: function (id) { return window.go.main.App.ClearCover(id); },
+    searchMetadata: function (id, q, sources) { return window.go.main.App.SearchMetadata(id, q, sources); },
+    applyCandidate: function (id, cand, fields) { return window.go.main.App.ApplyCandidate(id, cand, fields); },
     on: function (ev, cb) { if (window.runtime) window.runtime.EventsOn(ev, cb); }
   } : {
     mode: 'http',
@@ -68,7 +74,13 @@
     drives: function () { return HTTP.get('/api/drives'); },
     discover: function (o) { return HTTP.post('/api/discover', o); },
     pickDir: null,
+    pickImage: null,
     openInBrowser: null,
+    setCoverFromData: function (id, data, source) { return HTTP.post('/api/cover/data', { id: id, data: data, source: source }); },
+    setCoverFromFile: function (id, path) { return HTTP.post('/api/cover/file', { id: id, path: path }); },
+    clearCover: function (id) { return HTTP.post('/api/cover/clear', { id: id }); },
+    searchMetadata: function (id, q, sources) { return HTTP.post('/api/metadata/search', { id: id, query: q, sources: sources }); },
+    applyCandidate: function (id, cand, fields) { return HTTP.post('/api/metadata/apply', { id: id, candidate: cand, fields: fields }); },
     on: function () { /* B/S 模式本身就是浏览器，无需事件流 */ }
   };
   function thumbUrl(id) { return '/thumb?id=' + encodeURIComponent(id); }
@@ -78,7 +90,8 @@
   var S = {
     view: 'shelf',
     items: [], colors: {}, shelves: [], libs: [], settings: {}, status: { online: true },
-    search: '', sortBy: 'series', filterTag: '', filterSeries: '', activeShelf: '', report: null
+    search: '', sortBy: 'series', filterTag: '', filterSeries: '', activeShelf: '', report: null,
+    pasteHandler: null
   };
 
   var $ = function (sel) { return document.querySelector(sel); };
@@ -424,14 +437,31 @@
     var shelfName = (S.shelves.filter(function (s) { return s.id === i.shelfId })[0] || {}).name || '未归架';
     var stars = '';
     for (var k = 1; k <= 5; k++) stars += '<span class="' + (i.rating >= k ? 'on' : '') + '" data-star="' + k + '">★</span>';
-    d.innerHTML = (i.failed ? '<div class="noimg">损坏文件</div>'
-      : '<img class="cover" src="' + thumbUrl(i.id) + '" alt="" onerror="this.outerHTML=\'<div class=&quot;noimg&quot;>无封面</div>\'">')
+    var coverHTML = i.failed
+      ? '<div class="noimg">损坏文件</div>'
+      : '<img class="cover" id="dCover" src="' + (i.hasCover ? '/cover?id=' + encodeURIComponent(i.id) : thumbUrl(i.id)) + '" alt="" onerror="this.outerHTML=\'<div class=&quot;noimg&quot;>无封面</div>\'">';
+    d.innerHTML = coverHTML
+      + '<div class="coverbar">'
+      + '<button class="small" id="dPaste" title="在别处复制一张图片，然后回到这里按 Ctrl+V">粘贴图片</button>'
+      + '<button class="small" id="dPick">选择图片…</button>'
+      + (i.hasCover ? '<button class="small danger" id="dClearCover">清除封面</button>' : '')
+      + '</div>'
+      + (i.coverSource ? '<div class="muted" style="font-size:var(--fs-11)">封面来源：' + esc(i.coverSource) + '</div>' : '')
       + '<h2>' + esc(i.title || i.rel) + '</h2>'
       + '<div class="muted" style="font-size:var(--fs-12)">' + esc(i.rel) + '</div>'
+      + '<div class="field-group">'
+      + '<div class="gl">书籍信息（可手动填写；只写本机意图，不动源文件）</div>'
+      + '<input id="fTitle" class="edit" placeholder="书名" value="' + esc(i.title || '') + '">'
+      + '<div class="editrow">'
+      + '<input id="fSeries" class="edit" placeholder="系列" value="' + esc(i.series || '') + '">'
+      + '<input id="fNumber" class="edit narrow" placeholder="卷号" value="' + esc(i.number || '') + '">'
+      + '</div>'
+      + '<input id="fAuthor" class="edit" placeholder="作者" value="' + esc(i.author || '') + '">'
+      + '<div class="editrow" style="margin-top:var(--sp-1)">'
+      + '<button class="primary small" id="fSave">保存字段</button>'
+      + '<button class="small" id="dSearch">搜索书籍信息…</button>'
+      + '</div></div>'
       + '<div class="kv">'
-      + '<b>系列</b><span class="val">' + esc(i.series || '—') + '</span>'
-      + '<b>卷号</b><span class="val">' + esc(i.number || '—') + '</span>'
-      + '<b>作者</b><span class="val">' + esc(i.author || '—') + '</span>'
       + '<b>页数 / 格式</b><span class="val">' + (i.pages || '—') + ' 页 · ' + esc(i.ext || '') + '</span>'
       + '<b>在架位置</b><span class="val">' + esc(shelfName) + (i.shelfId ? '（第 ' + (i.index + 1) + ' 位）' : '') + '</span>'
       + '<b>身份</b><span class="val">' + esc(i.id) + '</span>'
@@ -451,13 +481,74 @@
       + '</div>';
     d.classList.add('open');
 
+    function currentFields() {
+      var v = function (sel) { var el = $(sel); return el ? el.value.trim() : ''; };
+      return { title: v('#fTitle'), series: v('#fSeries'), number: v('#fNumber'), author: v('#fAuthor') };
+    }
+    // 保存字段：整份 override 一起写（否则会丢掉评分/标签）
+    function saveFields() {
+      var f = currentFields();
+      T.setOverride(i.id, { title: f.title, series: f.series, number: f.number, author: f.author, tags: i.tags || [], rating: i.rating || 0 })
+        .then(function () { toast('已保存（只写意图，不改文件）'); refreshAll(); openDetail(id); })
+        .catch(function (e) { toast('保存失败：' + errText(e)); });
+    }
+    $('#fSave').onclick = saveFields;
+    ['fTitle', 'fSeries', 'fNumber', 'fAuthor'].forEach(function (fid) {
+      var el = $('#' + fid);
+      if (el) el.onkeydown = function (e) { if (e.key === 'Enter') saveFields(); };
+    });
+    $('#dSearch').onclick = function () { openMetaSearch(i); };
+
+    // 封面：粘贴 / 选文件 / 清除
+    $('#dPaste').onclick = function () {
+      toast('先在别处复制一张图片，回到这里按 Ctrl+V', 3200);
+      var el = $('#fTitle'); if (el) el.focus();
+    };
+    S.pasteHandler = function (e) {
+      var items = (e.clipboardData && e.clipboardData.items) || [];
+      for (var k = 0; k < items.length; k++) {
+        if (items[k].type && items[k].type.indexOf('image/') === 0) {
+          var file = items[k].getAsFile();
+          var fr = new FileReader();
+          fr.onload = function () { setCoverData(i.id, fr.result); };
+          fr.readAsDataURL(file);
+          e.preventDefault();
+          return;
+        }
+      }
+    };
+    document.addEventListener('paste', S.pasteHandler);
+    $('#dPick').onclick = function () {
+      if (T.pickImage) {
+        T.pickImage().then(function (p) { if (p) setCoverFile(i.id, p); })
+          .catch(function (e) { toast('选择图片失败：' + errText(e)); });
+        return;
+      }
+      var inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*';
+      inp.onchange = function () {
+        var f = inp.files && inp.files[0]; if (!f) return;
+        var fr = new FileReader();
+        fr.onload = function () { setCoverData(i.id, fr.result); };
+        fr.readAsDataURL(f);
+      };
+      inp.click();
+    };
+    if ($('#dClearCover')) $('#dClearCover').onclick = function () {
+      T.clearCover(i.id).then(function () { toast('已清除用户封面'); refreshAll(); openDetail(id); })
+        .catch(function (e) { toast('清除失败：' + errText(e)); });
+    };
+
     function saveOv(patch) {
+      var f = currentFields();
       var ov = {
-        title: patch.title !== undefined ? patch.title : (i.title !== i.origTitle ? i.title : ''),
+        title: patch.title !== undefined ? patch.title : f.title,
+        series: f.series, number: f.number, author: f.author,
         tags: patch.tags !== undefined ? patch.tags : (i.tags || []),
         rating: patch.rating !== undefined ? patch.rating : (i.rating || 0)
       };
-      T.setOverride(i.id, ov).then(function () { toast('已保存（只写意图，不改文件）'); refreshAll(); openDetail(id); });
+      T.setOverride(i.id, ov).then(function () { toast('已保存（只写意图，不改文件）'); refreshAll(); openDetail(id); })
+        .catch(function (e) { toast('保存失败：' + errText(e)); });
     }
     d.querySelectorAll('#stars span').forEach(function (s) {
       s.onclick = function () { saveOv({ rating: parseInt(s.dataset.star, 10) }) };
@@ -489,7 +580,87 @@
     };
     if ($('#dUnshelf')) $('#dUnshelf').onclick = function () { T.moveItem(i.id, '', -1).then(function () { toast('已移出书架'); refreshAll(); closeDetail(); }) };
   }
-  function closeDetail() { $('#detail').classList.remove('open') }
+
+  function setCoverData(id, dataUrl) {
+    T.setCoverFromData(id, dataUrl, '手动粘贴').then(function () {
+      toast('封面已更新（存本机缓存，不动源文件）');
+      refreshAll(); setTimeout(function () { openDetail(id); }, 150);
+    }).catch(function (e) { toast('封面设置失败：' + errText(e)); });
+  }
+  function setCoverFile(id, path) {
+    T.setCoverFromFile(id, path).then(function () {
+      toast('封面已更新（来自本地图片文件）');
+      refreshAll(); setTimeout(function () { openDetail(id); }, 150);
+    }).catch(function (e) { toast('封面设置失败：' + errText(e)); });
+  }
+
+  // ---------- 在线搜索书籍信息（用户点击才联网） ----------
+  var META_SOURCES = ['Google Books', 'Open Library', 'Bangumi'];
+  function openMetaSearch(item) {
+    var q = item.title || item.series || '';
+    openModal('<h3>搜索书籍信息</h3>'
+      + '<div class="muted" style="font-size:var(--fs-12)">只发送书名 / 系列 / 卷号 / 作者这类书目字段，'
+      + '不发送路径、不发送文件、不发送指纹。搜到的信息用不用、用哪几条，由你决定。</div>'
+      + '<div class="field-group"><div class="gl">查询词</div><input id="mq" class="edit" value="' + esc(q) + '"></div>'
+      + '<div class="field-group"><div class="gl">数据源</div><div class="chips">'
+      + META_SOURCES.map(function (s) { return '<label class="chip on"><input type="checkbox" checked data-src="' + esc(s) + '">' + esc(s) + '</label>'; }).join('')
+      + '</div></div>'
+      + '<div id="mres"></div>'
+      + '<div class="foot"><button class="ghost" id="mCancel">关闭</button><button class="primary" id="mRun">搜索</button></div>', true);
+    $('#mCancel').onclick = closeModal;
+    $('#mRun').onclick = function () { runMetaSearch(item); };
+    $('#mq').onkeydown = function (e) { if (e.key === 'Enter') runMetaSearch(item); };
+  }
+  function runMetaSearch(item) {
+    var sources = [];
+    $('#modal').querySelectorAll('input[data-src]').forEach(function (c) { if (c.checked) sources.push(c.dataset.src); });
+    if (!sources.length) { toast('至少选一个数据源'); return; }
+    var btn = $('#mRun'); btn.disabled = true; btn.textContent = '搜索中…';
+    $('#mres').innerHTML = '<div class="muted">正在查询 ' + esc(sources.join(' / ')) + ' …</div>';
+    T.searchMetadata(item.id, $('#mq').value, sources).then(function (list) {
+      btn.disabled = false; btn.textContent = '重新搜索';
+      list = list || [];
+      if (!list.length) { $('#mres').innerHTML = '<div class="muted">没有找到结果，换个查询词试试</div>'; return; }
+      $('#mres').innerHTML = '<div class="gl" style="font-size:var(--fs-12);color:var(--dim);margin-bottom:var(--sp-1)">'
+        + list.length + ' 条结果（按贴合度排序）</div>'
+        + list.map(function (c, idx) {
+          var img = c.coverKey
+            ? '<img src="/covercand?id=' + encodeURIComponent(c.coverKey) + '" style="width:56px;height:84px;object-fit:cover;border-radius:4px;background:var(--bg-3)" alt="">'
+            : '<div style="width:56px;height:84px;border-radius:4px;background:var(--bg-3);flex:0 0 56px"></div>';
+          var meta = [c.author, c.year, c.publisher].filter(Boolean).join(' · ');
+          return '<div class="hit" style="align-items:flex-start">' + img
+            + '<div style="flex:1;min-width:0;padding-left:var(--sp-2)">'
+            + '<div class="path">' + esc(c.title || '(无标题)') + '</div>'
+            + (meta ? '<div class="sub">' + esc(meta) + '</div>' : '')
+            + '<div class="sub">' + esc(c.source) + ' · 贴合度 ' + Math.round((c.score || 0) * 100) + '%'
+            + (c.score >= 0.6 ? ' · 高置信' : '') + '</div></div>'
+            + '<div style="display:flex;flex-direction:column;gap:4px">'
+            + '<button class="small primary" data-apply="' + idx + '">用这条</button>'
+            + (c.coverKey ? '<button class="small" data-cover="' + idx + '">只用封面</button>' : '')
+            + '</div></div>';
+        }).join('');
+      $('#modal').querySelectorAll('[data-apply]').forEach(function (b) {
+        b.onclick = function () { applyCand(item.id, list[parseInt(b.dataset.apply, 10)], null); };
+      });
+      $('#modal').querySelectorAll('[data-cover]').forEach(function (b) {
+        b.onclick = function () { applyCand(item.id, list[parseInt(b.dataset.cover, 10)], ['cover']); };
+      });
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = '搜索';
+      $('#mres').innerHTML = '<div class="bad" style="font-size:var(--fs-13)">' + esc(errText(e)) + '</div>';
+    });
+  }
+  function applyCand(id, cand, fields) {
+    T.applyCandidate(id, cand, fields).then(function () {
+      toast('已应用（只写本机意图，不改源文件）');
+      closeModal(); refreshAll(); setTimeout(function () { openDetail(id); }, 150);
+    }).catch(function (e) { toast('应用失败：' + errText(e)); });
+  }
+
+  function closeDetail() {
+    if (S.pasteHandler) { document.removeEventListener('paste', S.pasteHandler); S.pasteHandler = null; }
+    $('#detail').classList.remove('open');
+  }
 
   // ---------- 设置（右上角齿轮） ----------
   function openSettings() {
@@ -517,10 +688,16 @@
       + row('同步缩略图到库内', '<input type="checkbox" id="stSyncThumbs"' + (s.sync_thumbs ? ' checked' : '') + '>')
       + row('回写去抖（毫秒）', '<input type="number" id="stDebounce" value="' + (s.sync_debounce_ms || 5000) + '">')
       + row('扫描并发', '<input type="number" id="stWorkers" value="' + (s.scan_workers || 4) + '">')
+      + row('网络代理', '<select id="stProxy">'
+        + '<option value=""' + (!s.proxy ? ' selected' : '') + '>跟随系统</option>'
+        + '<option value="direct"' + (s.proxy === 'direct' ? ' selected' : '') + '>直连（不走代理）</option>'
+        + '<option value="custom"' + (s.proxy && s.proxy !== 'direct' ? ' selected' : '') + '>自定义…</option></select>'
+        + '<input type="text" id="stProxyCustom" placeholder="http://127.0.0.1:7890" value="' + esc(s.proxy && s.proxy !== 'direct' ? s.proxy : '') + '" style="width:100%;margin-top:4px' + (s.proxy && s.proxy !== 'direct' ? '' : ';display:none') + '">')
       + row('主题', '<select id="stTheme"><option value="dark"' + (s.theme !== 'light' ? ' selected' : '') + '>深色</option><option value="light"' + (s.theme === 'light' ? ' selected' : '') + '>浅色</option></select>')
       + row('书脊样式', '<select id="stSpine"><option value="wood"' + (s.spine_style !== 'plain' ? ' selected' : '') + '>木质</option><option value="plain"' + (s.spine_style === 'plain' ? ' selected' : '') + '>极简</option></select>')
       + bsRow
       + '<div class="muted" style="font-size:var(--fs-12);margin-top:var(--sp-2)">关闭「库内快照回写」= 纯本机模式：库目录零写入，适合只读挂载。</div>'
+      + '<div class="muted" style="font-size:var(--fs-12);margin-top:var(--sp-1)">网络代理只影响「搜索书籍信息」时的联网请求；不填则跟随 Windows 系统代理设置。</div>'
       + '<div class="foot"><button class="ghost" id="stCancel">取消</button><button class="primary" id="stSave">保存</button></div>');
     $('#stCancel').onclick = closeModal;
     if ($('#stBrowser')) {
@@ -529,8 +706,15 @@
           .catch(function (e) { toast('启动失败：' + errText(e)); });
       };
     }
+    $('#stProxy').onchange = function () {
+      var custom = $('#stProxyCustom');
+      custom.style.display = ($('#stProxy').value === 'custom') ? '' : 'none';
+    };
     $('#stSave').onclick = function () {
+      var proxyVal = $('#stProxy').value;
+      if (proxyVal === 'custom') proxyVal = ($('#stProxyCustom').value || '').trim() || '';
       var next = Object.assign({}, s, {
+        proxy: proxyVal,
         write_back_enabled: $('#stWriteBack').checked,
         sync_index: $('#stSyncIndex').checked,
         sync_thumbs: $('#stSyncThumbs').checked,

@@ -180,9 +180,23 @@ type ShelfDef struct {
 
 type Override struct {
 	Title   string   `json:"title,omitempty"`
+	Series  string   `json:"series,omitempty"`
+	Number  string   `json:"number,omitempty"`
+	Author  string   `json:"author,omitempty"`
 	Tags    []string `json:"tags,omitempty"`
 	Rating  int      `json:"rating,omitempty"`
 	Deleted bool     `json:"deleted,omitempty"`
+	// Cover 是用户指定的封面（缓存文件 + 来源）。为空则用文件内嵌封面。
+	Cover *CoverRef `json:"cover,omitempty"`
+}
+
+// CoverRef 指向本机缓存里的一张封面（派生数据，可删）。
+type CoverRef struct {
+	File   string `json:"file"`             // 镜像目录 covers/ 下的文件名
+	Ext    string `json:"ext"`              // 原始扩展名（.jpg/.png/…）
+	Source string `json:"source,omitempty"` // 来源：手动粘贴 / 选择文件 / 站点名
+	Query  string `json:"query,omitempty"`  // 联网搜索时用的查询串（可追溯）
+	At     int64  `json:"at,omitempty"`     // 设置时间（Unix 秒）
 }
 
 type UIState struct {

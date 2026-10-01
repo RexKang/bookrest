@@ -25,7 +25,9 @@ type Settings struct {
 	ScanWorkers    int    `json:"scan_workers"`
 	PruneEnabled   bool   `json:"prune_enabled"`
 	FullVerifyDays int    `json:"full_verify_days"`
-	Theme          string `json:"theme"`
+	// Proxy 是联网补全信息时的代理："" = 跟随系统，direct = 直连，或 http://host:port
+	Proxy        string `json:"proxy,omitempty"`
+	Theme        string `json:"theme,omitempty"`
 	SpineStyle     string `json:"spine_style"`
 	CacheMaxBytes  int64  `json:"cache_max_bytes"`
 	OpenWithMap    map[string]string `json:"external_open_map"`

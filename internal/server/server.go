@@ -24,6 +24,7 @@ import (
 
 	"github.com/RexKang/bookrest/internal/app"
 	"github.com/RexKang/bookrest/internal/config"
+	"github.com/RexKang/bookrest/internal/metadata"
 	"github.com/RexKang/bookrest/internal/store"
 )
 
@@ -202,6 +203,80 @@ func registerRoutes(mux *http.ServeMux, a *app.App, opts Options) {
 			return
 		}
 		writeResult(w, a.Settings(), nil)
+	})
+
+	// 在线书目检索（只在用户点击时触发）
+	mux.HandleFunc("/covercand", func(w http.ResponseWriter, r *http.Request) {
+		data, err := a.CandidateCover(r.URL.Query().Get("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "max-age=3600")
+		_, _ = w.Write(data)
+	})
+	post(mux, "/api/metadata/search", func(body json.RawMessage) (any, error) {
+		var req struct {
+			ID      string   `json:"id"`
+			Query   string   `json:"query"`
+			Sources []string `json:"sources"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			return nil, err
+		}
+		return a.SearchMetadata(req.ID, req.Query, req.Sources)
+	})
+	post(mux, "/api/metadata/apply", func(body json.RawMessage) (any, error) {
+		var req struct {
+			ID      string             `json:"id"`
+			Cand    metadata.Candidate `json:"candidate"`
+			Fields  []string           `json:"fields"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, a.ApplyCandidate(req.ID, req.Cand, req.Fields)
+	})
+
+	// 封面（用户指定：粘贴 / 选文件 / 清除；B/S 模式下同样可用）
+	mux.HandleFunc("/cover", func(w http.ResponseWriter, r *http.Request) {
+		data, err := a.CoverBytes(r.URL.Query().Get("id"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "max-age=3600")
+		_, _ = w.Write(data)
+	})
+	post(mux, "/api/cover/data", func(body json.RawMessage) (any, error) {
+		var req struct {
+			ID     string `json:"id"`
+			Data   string `json:"data"`
+			Source string `json:"source"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, a.SetCoverFromData(req.ID, req.Data, req.Source)
+	})
+	post(mux, "/api/cover/file", func(body json.RawMessage) (any, error) {
+		var req struct {
+			ID   string `json:"id"`
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, a.SetCoverFromFile(req.ID, req.Path)
+	})
+	post(mux, "/api/cover/clear", func(body json.RawMessage) (any, error) {
+		var req struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(body, &req)
+		return map[string]bool{"ok": true}, a.ClearCover(req.ID)
 	})
 
 	// 动作类

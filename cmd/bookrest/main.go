@@ -142,6 +142,16 @@ func (s *Shell) PickLibraryDir() (string, error) {
 	})
 }
 
+// PickImageFile 打开图片选择器（用于手动指定封面）。
+func (s *Shell) PickImageFile() (string, error) {
+	return runtime.OpenFileDialog(s.ctx, runtime.OpenDialogOptions{
+		Title: "选择封面图片",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "图片 (*.jpg;*.jpeg;*.png;*.gif;*.webp)", Pattern: "*.jpg;*.jpeg;*.png;*.gif;*.webp"},
+		},
+	})
+}
+
 // thumbHandler 处理 GET /thumb?id=<id>：按需生成封面缩略图（其余请求交给内嵌资源）。
 func thumbHandler(a *app.App) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {

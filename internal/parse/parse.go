@@ -58,6 +58,13 @@ var bookExts = map[string]bool{
 // IsBookExt 判断扩展名是否属于受支持的书籍格式。
 func IsBookExt(ext string) bool { return bookExts[strings.ToLower(ext)] }
 
+// CanExtractCover 判断该格式是否能自动提取封面（即有没有对应解析器）。
+// PDF/CBR/MOBI 这类只索引的格式天然取不到封面，体检与界面据此区分「不支持」与「缺封面」。
+func CanExtractCover(ext string) bool {
+	_, ok := For(strings.ToLower(ext))
+	return ok
+}
+
 // IsImageExt 判断是否算作「页」。
 func IsImageExt(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {

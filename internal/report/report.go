@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/RexKang/bookrest/internal/domain"
+	"github.com/RexKang/bookrest/internal/parse"
 	"github.com/RexKang/bookrest/internal/store"
 )
 
@@ -46,7 +47,9 @@ func (r *Report) Count(k Kind) int {
 }
 
 // Run 遍历事实账，产出报告。全部为只读分析。
-func Run(root string, idx *store.Index) *Report {
+// Run 生成体检报告。overrides 用于识别「用户已手动指定封面」的条目，
+// 避免它们被计入「无封面」。
+func Run(root string, idx *store.Index, overrides map[string]store.Override) *Report {
 	// Findings 初始化为空切片：JSON 序列化成 [] 而不是 null，界面与脚本都少一层判断
 	rep := &Report{Root: root, Findings: []Finding{}}
 
@@ -69,8 +72,12 @@ func Run(root string, idx *store.Index) *Report {
 		if f.Art.Failed {
 			corrupt = append(corrupt, f.Rel)
 		}
-		if !f.Art.Cover && !f.Art.Failed {
-			noCover = append(noCover, f.Rel) // 损坏文件已在「损坏」里报过，不重复计入
+		// 「无封面」只统计**本该能取到封面**的格式（CBZ/EPUB 等有解析器的）。
+		// PDF/CBR/MOBI 这类只索引的格式天然取不到封面，计进来只会淹没报告。
+		if !f.Art.Cover && !f.Art.Failed && parse.CanExtractCover(f.Ext) {
+			if ov, ok := overrides[f.ID]; !ok || ov.Cover == nil {
+				noCover = append(noCover, f.Rel)
+			}
 		}
 		if needsNaming(f) {
 			naming = append(naming, f.Rel)

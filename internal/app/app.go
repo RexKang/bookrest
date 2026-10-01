@@ -14,6 +14,7 @@ import (
 
 	"github.com/RexKang/bookrest/internal/config"
 	"github.com/RexKang/bookrest/internal/domain"
+	"github.com/RexKang/bookrest/internal/metadata"
 	"github.com/RexKang/bookrest/internal/parse"
 	"github.com/RexKang/bookrest/internal/report"
 	"github.com/RexKang/bookrest/internal/scan"
@@ -56,6 +57,9 @@ type Item struct {
 	Missing bool     `json:"missing"`
 	ShelfID string   `json:"shelfId"`
 	Index   int      `json:"index"`
+	// 封面来源：用户指定的封面会覆盖文件内嵌封面
+	HasCover    bool   `json:"hasCover"`
+	CoverSource string `json:"coverSource,omitempty"` // 手动粘贴 / 本地文件 / 站点名
 }
 
 type ScanSummary struct {
@@ -99,6 +103,7 @@ func New(cfgPath string, emit Emit) (*App, error) {
 			return nil, err
 		}
 	}
+	metadata.Configure(cfg.Settings.Proxy) // 联网补全信息时按设置走代理
 	return a, nil
 }
 
@@ -294,6 +299,19 @@ func (a *App) Items() []Item {
 		}
 		if ov.Title != "" {
 			it.Title = ov.Title
+		}
+		if ov.Series != "" {
+			it.Series = ov.Series
+		}
+		if ov.Number != "" {
+			it.Number = ov.Number
+		}
+		if ov.Author != "" {
+			it.Author = ov.Author
+		}
+		if ov.Cover != nil {
+			it.HasCover = true
+			it.CoverSource = ov.Cover.Source
 		}
 		if f.Pages != nil {
 			it.Pages = *f.Pages
@@ -504,7 +522,7 @@ func (a *App) syncToLibrary() {
 func (a *App) Report() *report.Report {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return report.Run(a.root, a.idx)
+	return report.Run(a.root, a.idx, a.shelf.Overrides)
 }
 
 func (a *App) Settings() config.Settings {
@@ -514,6 +532,7 @@ func (a *App) Settings() config.Settings {
 }
 
 func (a *App) SaveSettings(s config.Settings) error {
+	defer metadata.Configure(s.Proxy) // 保存后立刻生效，无需重启
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.cfg.Settings = s
@@ -562,24 +581,13 @@ func (a *App) ThumbBytes(id string) ([]byte, error) {
 		a.mu.Unlock()
 		return data, nil
 	}
-	f, ok := a.idx.Get(id)
-	root := a.root
 	a.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("未知条目：%s", id)
-	}
-	p, ok := parse.ForPath(f.Rel)
-	if !ok {
-		return nil, fmt.Errorf("该格式暂无封面")
-	}
-	res, err := p.Parse(filepath.Join(root, filepath.FromSlash(f.Rel)))
+	// 用户指定封面优先，其次文件内嵌封面
+	raw, err := a.rawCover(id)
 	if err != nil {
 		return nil, err
 	}
-	if len(res.Cover) == 0 {
-		return nil, fmt.Errorf("无封面")
-	}
-	data, err := thumb.CoverJPEG(res.Cover)
+	data, err := thumb.CoverJPEG(raw)
 	if err != nil {
 		return nil, err
 	}

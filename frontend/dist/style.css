@@ -269,6 +269,17 @@ html[data-theme="light"] .board { background: linear-gradient(180deg, var(--bg-2
 .actions { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-4); }
 .actions button { flex: 1 1 45%; }
 
+/* 详情页：封面工具条与字段编辑 */
+.coverbar { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: var(--sp-2); align-items: center; }
+.edit {
+  width: 100%; font-size: var(--fs-13); padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--radius-sm); border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); margin-bottom: var(--sp-1);
+}
+.editrow { display: flex; gap: var(--sp-1); }
+.editrow .edit { margin-bottom: 0; }
+.edit.narrow { max-width: 88px; }
+
 /* ---------- 按钮 ---------- */
 button {
   font-family: inherit; font-size: var(--fs-13); line-height: 1.5;
