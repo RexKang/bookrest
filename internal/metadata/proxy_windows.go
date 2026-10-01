@@ -27,35 +27,3 @@ func systemProxy() string {
 	}
 	return normalizeProxyServer(strings.TrimSpace(server))
 }
-
-// normalizeProxyServer 处理 "host:port" 与 "http=h:p;https=h:p" 两种写法。
-func normalizeProxyServer(server string) string {
-	server = strings.TrimSpace(server)
-	if server == "" {
-		return ""
-	}
-	if strings.Contains(server, "=") {
-		pick := ""
-		for _, part := range strings.Split(server, ";") {
-			kv := strings.SplitN(part, "=", 2)
-			if len(kv) != 2 {
-				continue
-			}
-			if strings.EqualFold(strings.TrimSpace(kv[0]), "https") {
-				pick = strings.TrimSpace(kv[1])
-				break
-			}
-			if pick == "" {
-				pick = strings.TrimSpace(kv[1])
-			}
-		}
-		server = pick
-	}
-	if server == "" {
-		return ""
-	}
-	if !strings.Contains(server, "://") {
-		server = "http://" + server
-	}
-	return server
-}

@@ -155,6 +155,39 @@ func errHostNotAllowed(u string) error { return fmt.Errorf("域名不在白名�
 func errStatus(u string, code int) error { return fmt.Errorf("%s 返回 %d", u, code) }
 func errEmptyQuery() error             { return fmt.Errorf("查询词为空") }
 
+// normalizeProxyServer 处理 "host:port" 与 "http=h:p;https=h:p" 两种写法。
+// 放在与平台无关的文件里：Windows 读注册表时用它，测试也直接覆盖它。
+func normalizeProxyServer(server string) string {
+	server = strings.TrimSpace(server)
+	if server == "" {
+		return ""
+	}
+	if strings.Contains(server, "=") {
+		pick := ""
+		for _, part := range strings.Split(server, ";") {
+			kv := strings.SplitN(part, "=", 2)
+			if len(kv) != 2 {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(kv[0]), "https") {
+				pick = strings.TrimSpace(kv[1])
+				break
+			}
+			if pick == "" {
+				pick = strings.TrimSpace(kv[1])
+			}
+		}
+		server = pick
+	}
+	if server == "" {
+		return ""
+	}
+	if !strings.Contains(server, "://") {
+		server = "http://" + server
+	}
+	return server
+}
+
 func getJSON(ctx context.Context, rawURL string, out any) error {
 	if !HostAllowed(rawURL) {
 		return fmt.Errorf("域名不在白名单内：%s", rawURL)
